@@ -1,0 +1,6 @@
+env_modem/
+__pycache__/
+*.pyc
+donnees_reelles/
+resultats/
+resultats_simulations_MFSK.csv
