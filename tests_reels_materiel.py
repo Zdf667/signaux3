@@ -89,30 +89,61 @@ def enregistrer_audio(duree_ecoute):
     return enregistrement.ravel()
 
 
-def enregistrer_dans_registre(ligne_registre):
+def enregistrer_dans_registre(ligne_registre, fichier_registre):
     lignes_conservees = []
-    if FICHIER_REGISTRE.exists():
-        with FICHIER_REGISTRE.open(newline="", encoding="utf-8") as fichier_csv:
+    if fichier_registre.exists():
+        with fichier_registre.open(newline="", encoding="utf-8") as fichier_csv:
             lignes_conservees = [
                 ligne
                 for ligne in csv.DictReader(fichier_csv)
                 if ligne["fichier_wav"] != ligne_registre["fichier_wav"]
             ]
-    with FICHIER_REGISTRE.open("w", newline="", encoding="utf-8") as fichier_csv:
+    with fichier_registre.open("w", newline="", encoding="utf-8") as fichier_csv:
         ecrivain = csv.DictWriter(fichier_csv, fieldnames=COLONNES_REGISTRE)
         ecrivain.writeheader()
         ecrivain.writerows(lignes_conservees)
         ecrivain.writerow(ligne_registre)
 
 
+def mesurer_niveau(enregistrement):
+    return float(np.abs(enregistrement).max()) if enregistrement.size else 0.0
+
+
 def verifier_niveau(enregistrement):
-    niveau_maximal = float(np.abs(enregistrement).max()) if enregistrement.size else 0.0
+    niveau_maximal = mesurer_niveau(enregistrement)
     print(f"[RX] Niveau maximal capté : {niveau_maximal:.3f} (1.000 = saturation)")
     if niveau_maximal < NIVEAU_MINIMAL_CONSEILLE:
         print(
             f"[RX] Attention : niveau inférieur à {NIVEAU_MINIMAL_CONSEILLE}, "
             "montez le volume de l'émetteur ou le gain du micro"
         )
+
+
+def construire_nom_fichier(etiquettes):
+    return (
+        f"test_M{etiquettes['valence']}_{etiquettes['distance']}_{etiquettes['bruit_ambiant']}"
+        f"_rep{etiquettes['repetition']}_{etiquettes['appareils']}.wav"
+    )
+
+
+def sauvegarder_et_analyser(enregistrement, etiquettes, dossier_donnees):
+    nom_fichier = construire_nom_fichier(etiquettes)
+    wavfile.write(dossier_donnees / nom_fichier, FREQUENCE_ECHANTILLONNAGE, enregistrement)
+    valence = etiquettes["valence"]
+    bits_decodes = demoduler_bits(enregistrement, len(texte_vers_bits(TEXTE_REFERENCE)), valence)
+    performances = mesurer_performances(TEXTE_REFERENCE, bits_decodes, valence)
+    enregistrer_dans_registre(
+        {"fichier_wav": nom_fichier, **etiquettes, **performances},
+        dossier_donnees / FICHIER_REGISTRE.name,
+    )
+    return nom_fichier, performances
+
+
+def afficher_performances(performances):
+    print(f">>> Texte décodé : {performances['texte_decode']!r}")
+    print(f">>> BER : {performances['ber']:.2%}")
+    print(f">>> Caractères corrects : {performances['taux_caracteres_corrects']:.0%}")
+    print(f">>> Débit effectif : {performances['debit_effectif_bits_par_seconde']:.1f} bit/s")
 
 
 def recevoir_audio(valence):
@@ -124,27 +155,15 @@ def recevoir_audio(valence):
         "repetition": demander_choix("Numéro de répétition", REPETITIONS_AUTORISEES),
         "appareils": demander_texte_libre("Appareils émetteur-récepteur (ex : PC-Dell_vers_iPhone12)"),
     }
-    nom_fichier = (
-        f"test_M{valence}_{etiquettes['distance']}_{etiquettes['bruit_ambiant']}"
-        f"_rep{etiquettes['repetition']}_{etiquettes['appareils']}.wav"
-    )
-    chemin_wav = DOSSIER_DONNEES_REELLES / nom_fichier
+    chemin_wav = DOSSIER_DONNEES_REELLES / construire_nom_fichier(etiquettes)
     if chemin_wav.exists():
         raise FileExistsError(f"{chemin_wav} existe déjà : supprimez-le ou changez d'étiquettes")
 
     enregistrement = enregistrer_audio(duree_emission(len(TEXTE_REFERENCE), valence) + MARGE_ECOUTE)
-    wavfile.write(chemin_wav, FREQUENCE_ECHANTILLONNAGE, enregistrement)
-    print(f"[RX] Audio sauvegardé : {chemin_wav}")
     verifier_niveau(enregistrement)
-
-    bits_decodes = demoduler_bits(enregistrement, len(texte_vers_bits(TEXTE_REFERENCE)), valence)
-    performances = mesurer_performances(TEXTE_REFERENCE, bits_decodes, valence)
-    enregistrer_dans_registre({"fichier_wav": nom_fichier, **etiquettes, **performances})
-
-    print(f">>> Texte décodé : {performances['texte_decode']!r}")
-    print(f">>> BER : {performances['ber']:.2%}")
-    print(f">>> Caractères corrects : {performances['taux_caracteres_corrects']:.0%}")
-    print(f">>> Débit effectif : {performances['debit_effectif_bits_par_seconde']:.1f} bit/s")
+    nom_fichier, performances = sauvegarder_et_analyser(enregistrement, etiquettes, DOSSIER_DONNEES_REELLES)
+    print(f"[RX] Audio sauvegardé : {DOSSIER_DONNEES_REELLES / nom_fichier}")
+    afficher_performances(performances)
     afficher_spectrogramme(enregistrement, titre=f"Spectrogramme - {nom_fichier}")
 
 
